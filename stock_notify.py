@@ -32,31 +32,65 @@ def fetch_quote():
     return data["datas"][0]
 
 
-def build_payload(q):
-    code = q["compareToPreviousPrice"]["code"]
+NXT_SESSION = {
+    "PRE_MARKET": "프리마켓",
+    "REGULAR_MARKET": "메인마켓",
+    "AFTER_MARKET": "애프터마켓",
+}
+
+
+def format_change(src):
+    code = src["compareToPreviousPrice"]["code"]
     arrow, label, color = DIRECTION.get(code, ("", "", 0x868E96))
     sign = "-" if code in ("4", "5") else "+" if code in ("1", "2") else ""
+    text = f"{arrow} {src['compareToPreviousClosePrice']}원 ({sign}{src['fluctuationsRatio']}%)"
+    return text, label, color
 
-    change = f"{arrow} {q['compareToPreviousClosePrice']}원 ({sign}{q['fluctuationsRatio']}%)"
-    traded_at = q["localTradedAt"][:19].replace("T", " ")
-    status = "장중" if q.get("marketStatus") == "OPEN" else "장마감"
+
+def build_payload(q):
+    # q 는 KRX 시세, overMarketPriceInfo 는 넥스트레이드(NXT) 시세
+    nxt = q.get("overMarketPriceInfo")
+    krx_open = q.get("marketStatus") == "OPEN"
+    nxt_open = bool(nxt) and nxt.get("overMarketStatus") == "OPEN"
+
+    # KRX 정규장이면 KRX 가격을, KRX 장외시간에 NXT가 열려 있으면 NXT 가격을 메인으로 표시
+    if krx_open or not nxt_open:
+        main, main_price, venue = q, q["closePrice"], "KRX"
+        status = "KRX 정규장" if krx_open else "장마감"
+    else:
+        main, main_price, venue = nxt, nxt["overPrice"], "NXT"
+        session = nxt.get("tradingSessionType", "")
+        status = f"NXT {NXT_SESSION.get(session, session)}"
+
+    change, label, color = format_change(main)
+    traded_at = main["localTradedAt"][:19].replace("T", " ")
+
+    fields = [
+        {"name": "시가", "value": f"{main['openPrice']}원", "inline": True},
+        {"name": "고가", "value": f"{main['highPrice']}원", "inline": True},
+        {"name": "저가", "value": f"{main['lowPrice']}원", "inline": True},
+        {"name": "거래량", "value": f"{main['accumulatedTradingVolume']}주", "inline": True},
+        {"name": "거래대금", "value": f"{main['accumulatedTradingValue']}원", "inline": True},
+        {"name": "상태", "value": f"{status} · {label}", "inline": True},
+    ]
+
+    # 메인이 아닌 쪽 시장 가격도 함께 표시
+    if venue == "KRX" and nxt:
+        other_change, _, _ = format_change(nxt)
+        fields.append({"name": "NXT", "value": f"{nxt['overPrice']}원 {other_change}", "inline": False})
+    elif venue == "NXT":
+        other_change, _, _ = format_change(q)
+        fields.append({"name": "KRX 종가", "value": f"{q['closePrice']}원 {other_change}", "inline": False})
 
     return {
         "username": "주가 알림봇",
         "embeds": [
             {
-                "title": f"{q['stockName']} ({q['itemCode']})",
+                "title": f"{q['stockName']} ({q['itemCode']}) · {venue}",
                 "url": f"https://finance.naver.com/item/main.naver?code={q['itemCode']}",
-                "description": f"## {q['closePrice']}원\n{change}",
+                "description": f"## {main_price}원\n{change}",
                 "color": color,
-                "fields": [
-                    {"name": "시가", "value": f"{q['openPrice']}원", "inline": True},
-                    {"name": "고가", "value": f"{q['highPrice']}원", "inline": True},
-                    {"name": "저가", "value": f"{q['lowPrice']}원", "inline": True},
-                    {"name": "거래량", "value": f"{q['accumulatedTradingVolume']}주", "inline": True},
-                    {"name": "거래대금", "value": f"{q['accumulatedTradingValue']}원", "inline": True},
-                    {"name": "상태", "value": f"{status} · {label}", "inline": True},
-                ],
+                "fields": fields,
                 "footer": {"text": f"기준 {traded_at} KST · 네이버 금융"},
             }
         ],
@@ -88,7 +122,8 @@ def main():
         sys.exit("DISCORD_WEBHOOK_URL 환경변수가 설정되지 않았습니다.")
 
     status = send_discord(webhook_url, payload)
-    print(f"전송 완료 ({status}): {quote['stockName']} {quote['closePrice']}원")
+    embed = payload["embeds"][0]
+    print(f"전송 완료 ({status}): {embed['title']} {embed['description'].splitlines()[0][3:]}")
 
 
 if __name__ == "__main__":
