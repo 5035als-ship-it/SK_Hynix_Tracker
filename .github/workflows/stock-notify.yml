@@ -3,7 +3,8 @@ name: SK하이닉스 주가 알림
 on:
   schedule:
     # 평일 장중(KST 09:00~15:30 = UTC 00:00~06:30) 5분마다 실행
-    - cron: "*/5 0-6 * * 1-5"
+    # 정각·5분 단위는 GitHub 부하가 몰려 지연/누락이 잦아 2분 어긋나게 설정
+    - cron: "2-59/5 0-6 * * 1-5"
   workflow_dispatch: # Actions 탭에서 수동 실행
 
 concurrency:
