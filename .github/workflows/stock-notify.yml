@@ -1,0 +1,41 @@
+name: SK하이닉스 주가 알림
+
+on:
+  schedule:
+    # 평일 장중(KST 09:00~15:30 = UTC 00:00~06:30) 5분마다 실행
+    - cron: "*/5 0-6 * * 1-5"
+  workflow_dispatch: # Actions 탭에서 수동 실행
+
+concurrency:
+  group: stock-notify
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: 장 운영시간 확인
+        id: market
+        run: |
+          now=$(TZ=Asia/Seoul date +%H%M)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || { [ "$now" -ge 0900 ] && [ "$now" -le 1535 ]; }; then
+            echo "open=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "장 운영시간이 아닙니다 (KST $now). 건너뜁니다."
+            echo "open=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.market.outputs.open == 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.market.outputs.open == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: 주가 조회 후 디스코드 전송
+        if: steps.market.outputs.open == 'true'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python stock_notify.py
